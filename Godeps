@@ -1,4 +1,5 @@
-github.com/Shopify/sarama 8aadb476e66ca998f2f6bb3c993e9a2daa3666b9
+github.com/Shopify/sarama bd61cae2be85fa6ff40eb23dcdd24567967ac2ae
+github.com/bsm/sarama-cluster 11887f57ba85b075757463e9a4ffcfb0851ddff3
 github.com/Sirupsen/logrus 219c8cb75c258c552e999735be6df753ffc7afdc
 github.com/aerospike/aerospike-client-go 7f3a312c3b2a60ac083ec6da296091c52c795c63
 github.com/amir/raidman 53c1b967405155bfc8758557863bf2e14f814687

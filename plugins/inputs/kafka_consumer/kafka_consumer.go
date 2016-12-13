@@ -10,15 +10,14 @@ import (
 	"github.com/influxdata/telegraf/plugins/parsers"
 
 	"github.com/Shopify/sarama"
-	"github.com/wvanbergen/kafka/consumergroup"
+	"github.com/bsm/sarama-cluster"
 )
 
 type Kafka struct {
-	ConsumerGroup   string
-	Topics          []string
-	ZookeeperPeers  []string
-	ZookeeperChroot string
-	Consumer        *consumergroup.ConsumerGroup
+	ConsumerGroup string
+	Topics        []string
+	BrokerList    []string
+	Consumer      *cluster.Consumer
 
 	// Legacy metric buffer support
 	MetricBuffer int
@@ -33,8 +32,9 @@ type Kafka struct {
 	// channel for all incoming kafka messages
 	in <-chan *sarama.ConsumerMessage
 	// channel for all kafka consumer errors
-	errs <-chan *sarama.ConsumerError
-	done chan struct{}
+	errs   <-chan error
+	notice <-chan *cluster.Notification
+	done   chan struct{}
 
 	// keep the accumulator internally:
 	acc telegraf.Accumulator
@@ -47,10 +47,8 @@ type Kafka struct {
 var sampleConfig = `
   ## topic(s) to consume
   topics = ["telegraf"]
-  ## an array of Zookeeper connection strings
-  zookeeper_peers = ["localhost:2181"]
-  ## Zookeeper Chroot
-  zookeeper_chroot = ""
+  ## an array of broker connection strings
+  broker_list = ["localhost:9093"]
   ## the name of the consumer group
   consumer_group = "telegraf_metrics_consumers"
   ## Offset (must be either "oldest" or "newest")
@@ -78,45 +76,40 @@ func (k *Kafka) SetParser(parser parsers.Parser) {
 func (k *Kafka) Start(acc telegraf.Accumulator) error {
 	k.Lock()
 	defer k.Unlock()
-	var consumerErr error
 
 	k.acc = acc
 
-	config := consumergroup.NewConfig()
-	config.Zookeeper.Chroot = k.ZookeeperChroot
+	config := cluster.NewConfig()
+	config.Consumer.Return.Errors = true
+	config.Group.Return.Notifications = true
+
 	switch strings.ToLower(k.Offset) {
 	case "oldest", "":
-		config.Offsets.Initial = sarama.OffsetOldest
+		config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	case "newest":
-		config.Offsets.Initial = sarama.OffsetNewest
+		config.Consumer.Offsets.Initial = sarama.OffsetNewest
 	default:
 		log.Printf("I! WARNING: Kafka consumer invalid offset '%s', using 'oldest'\n",
 			k.Offset)
-		config.Offsets.Initial = sarama.OffsetOldest
+		config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	}
 
-	if k.Consumer == nil || k.Consumer.Closed() {
-		k.Consumer, consumerErr = consumergroup.JoinConsumerGroup(
-			k.ConsumerGroup,
-			k.Topics,
-			k.ZookeeperPeers,
-			config,
-		)
-		if consumerErr != nil {
-			return consumerErr
-		}
-
-		// Setup message and error channels
-		k.in = k.Consumer.Messages()
-		k.errs = k.Consumer.Errors()
+	var err error
+	k.Consumer, err = cluster.NewConsumer(k.BrokerList, k.ConsumerGroup, k.Topics, config)
+	if err != nil {
+		return err
 	}
+
+	k.in = k.Consumer.Messages()
+	k.errs = k.Consumer.Errors()
+	k.notice = k.Consumer.Notifications()
 
 	k.done = make(chan struct{})
 
 	// Start the kafka message reader
 	go k.receiver()
 	log.Printf("I! Started the kafka consumer service, peers: %v, topics: %v\n",
-		k.ZookeeperPeers, k.Topics)
+		k.BrokerList, k.Topics)
 	return nil
 }
 
@@ -143,10 +136,8 @@ func (k *Kafka) receiver() {
 			}
 
 			if !k.doNotCommitMsgs {
-				// TODO(cam) this locking can be removed if this PR gets merged:
-				// https://github.com/wvanbergen/kafka/pull/84
 				k.Lock()
-				k.Consumer.CommitUpto(msg)
+				k.Consumer.MarkOffset(msg, "")
 				k.Unlock()
 			}
 		}

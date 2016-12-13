@@ -247,7 +247,7 @@ func reloadLoop(stop chan struct{}, s service.Service) {
 
 		shutdown := make(chan struct{})
 		signals := make(chan os.Signal)
-		signal.Notify(signals, os.Interrupt, syscall.SIGHUP)
+		signal.Notify(signals, os.Interrupt, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
 		go func() {
 			select {
 			case sig := <-signals:
