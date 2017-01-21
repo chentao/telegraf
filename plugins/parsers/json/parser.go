@@ -15,6 +15,7 @@ import (
 type JSONParser struct {
 	MetricName  string
 	TagKeys     []string
+	ExtractKeys []string
 	DefaultTags map[string]string
 }
 
@@ -53,6 +54,15 @@ func (p *JSONParser) parseObject(metrics []telegraf.Metric, jsonOut map[string]i
 	}
 
 	f := JSONFlattener{}
+
+	if len(p.ExtractKeys) > 0 {
+		extract_keys_map := make(map[string]int)
+		for _, k := range p.ExtractKeys {
+			extract_keys_map[k] = 1
+		}
+		f.ExtractKeysMap = extract_keys_map
+	}
+
 	err := f.FlattenJSON("", jsonOut)
 	if err != nil {
 		return nil, err
@@ -100,7 +110,8 @@ func (p *JSONParser) SetDefaultTags(tags map[string]string) {
 }
 
 type JSONFlattener struct {
-	Fields map[string]interface{}
+	Fields         map[string]interface{}
+	ExtractKeysMap map[string]int
 }
 
 // FlattenJSON flattens nested maps/interfaces into a fields map (ignoring bools and string)
@@ -110,12 +121,13 @@ func (f *JSONFlattener) FlattenJSON(
 	if f.Fields == nil {
 		f.Fields = make(map[string]interface{})
 	}
-	return f.FullFlattenJSON(fieldname, v, false, false)
+	return f.FullFlattenJSON(fieldname, "", v, false, false)
 }
 
 // FullFlattenJSON flattens nested maps/interfaces into a fields map (including bools and string)
 func (f *JSONFlattener) FullFlattenJSON(
 	fieldname string,
+	k string,
 	v interface{},
 	convertString bool,
 	convertBool bool,
@@ -127,7 +139,7 @@ func (f *JSONFlattener) FullFlattenJSON(
 	switch t := v.(type) {
 	case map[string]interface{}:
 		for k, v := range t {
-			err := f.FullFlattenJSON(fieldname+"_"+k+"_", v, convertString, convertBool)
+			err := f.FullFlattenJSON(fieldname+"_"+k+"_", k, v, convertString, convertBool)
 			if err != nil {
 				return err
 			}
@@ -135,7 +147,7 @@ func (f *JSONFlattener) FullFlattenJSON(
 	case []interface{}:
 		for i, v := range t {
 			k := strconv.Itoa(i)
-			err := f.FullFlattenJSON(fieldname+"_"+k+"_", v, convertString, convertBool)
+			err := f.FullFlattenJSON(fieldname+"_"+k+"_", k, v, convertString, convertBool)
 			if err != nil {
 				return nil
 			}
@@ -143,12 +155,28 @@ func (f *JSONFlattener) FullFlattenJSON(
 	case float64:
 		f.Fields[fieldname] = t
 	case string:
+		if _, ok := f.ExtractKeysMap[k]; ok {
+			fv, err := strconv.ParseFloat(v.(string), 64)
+			if err != nil {
+				return nil
+			}
+			f.Fields[fieldname] = fv
+			return nil
+		}
 		if convertString {
 			f.Fields[fieldname] = v.(string)
 		} else {
 			return nil
 		}
 	case bool:
+		if _, ok := f.ExtractKeysMap[k]; ok {
+			var bv float64 = 0
+			if v.(bool) == true {
+				bv = 1
+			}
+			f.Fields[fieldname] = bv
+			return nil
+		}
 		if convertBool {
 			f.Fields[fieldname] = v.(bool)
 		} else {

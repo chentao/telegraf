@@ -97,6 +97,21 @@ func NewJSONParser(
 	return parser, nil
 }
 
+func NewJSONParserWithExtractKeys(
+	metricName string,
+	tagKeys []string,
+	defaultTags map[string]string,
+	extract_keys []string,
+) (Parser, error) {
+	parser := &json.JSONParser{
+		MetricName:  metricName,
+		TagKeys:     tagKeys,
+		DefaultTags: defaultTags,
+		ExtractKeys: extract_keys,
+	}
+	return parser, nil
+}
+
 func NewNagiosParser() (Parser, error) {
 	return &nagios.NagiosParser{}, nil
 }

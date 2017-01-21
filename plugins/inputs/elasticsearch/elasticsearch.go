@@ -338,7 +338,7 @@ func (e *Elasticsearch) gatherClusterStats(url string, acc telegraf.Accumulator)
 	for p, s := range stats {
 		f := jsonparser.JSONFlattener{}
 		// parse json, including bools and strings
-		err := f.FullFlattenJSON("", s, true, true)
+		err := f.FullFlattenJSON("", "", s, true, true)
 		if err != nil {
 			return err
 		}
