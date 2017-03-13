@@ -32,9 +32,8 @@ type Kafka struct {
 	// channel for all incoming kafka messages
 	in <-chan *sarama.ConsumerMessage
 	// channel for all kafka consumer errors
-	errs   <-chan error
-	notice <-chan *cluster.Notification
-	done   chan struct{}
+	errs <-chan error
+	done chan struct{}
 
 	// keep the accumulator internally:
 	acc telegraf.Accumulator
@@ -102,7 +101,6 @@ func (k *Kafka) Start(acc telegraf.Accumulator) error {
 
 	k.in = k.Consumer.Messages()
 	k.errs = k.Consumer.Errors()
-	k.notice = k.Consumer.Notifications()
 
 	k.done = make(chan struct{})
 
