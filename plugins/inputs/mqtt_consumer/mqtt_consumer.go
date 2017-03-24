@@ -3,6 +3,7 @@ package mqtt_consumer
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,11 +17,12 @@ import (
 )
 
 type MQTTConsumer struct {
-	Servers  []string
-	Topics   []string
-	Username string
-	Password string
-	QoS      int `toml:"qos"`
+	Servers    []string
+	Topics     []string
+	Username   string
+	Password   string
+	QoS        int `toml:"qos"`
+	MetricName string
 
 	parser parsers.Parser
 
@@ -110,6 +112,10 @@ func (m *MQTTConsumer) Start(acc telegraf.Accumulator) error {
 			" = true, you MUST also set client_id")
 	}
 
+	if len(m.MetricName) == 0 {
+		return fmt.Errorf("MetricName must set")
+	}
+
 	m.acc = acc
 	if m.QoS > 2 || m.QoS < 0 {
 		return fmt.Errorf("MQTT Consumer, invalid QoS value: %d", m.QoS)
@@ -134,7 +140,7 @@ func (m *MQTTConsumer) Start(acc telegraf.Accumulator) error {
 }
 func (m *MQTTConsumer) onConnect(c mqtt.Client) {
 	log.Printf("I! MQTT Client Connected")
-	if !m.PersistentSession || !m.started {
+	if !m.PersistentSession {
 		topics := make(map[string]byte)
 		for _, topic := range m.Topics {
 			topics[topic] = byte(m.QoS)
@@ -146,6 +152,7 @@ func (m *MQTTConsumer) onConnect(c mqtt.Client) {
 				strings.Join(m.Topics[:], ","), subscribeToken.Error())
 		}
 		m.started = true
+		log.Printf("I! SENSE: MQTT onConnect: subscribe: %v", topics)
 	}
 	return
 }
@@ -163,18 +170,15 @@ func (m *MQTTConsumer) receiver() {
 		case <-m.done:
 			return
 		case msg := <-m.in:
-			topic := msg.Topic()
-			metrics, err := m.parser.Parse(msg.Payload())
-			if err != nil {
-				log.Printf("E! MQTT Parse Error\nmessage: %s\nerror: %s",
-					string(msg.Payload()), err.Error())
+			tags := map[string]string{
+				`broker`: m.Servers[0],
+				`topic`:  msg.Topic(),
 			}
 
-			for _, metric := range metrics {
-				tags := metric.Tags()
-				tags["topic"] = topic
-				m.acc.AddFields(metric.Name(), metric.Fields(), tags, metric.Time())
-			}
+			fields := make(map[string]interface{})
+			fv, _ := strconv.ParseFloat(string(msg.Payload()), 64)
+			fields["value"] = fv
+			m.acc.AddFields(m.MetricName, fields, tags)
 		}
 	}
 }
@@ -234,8 +238,12 @@ func (m *MQTTConsumer) createOpts() (*mqtt.ClientOptions, error) {
 		opts.AddBroker(server)
 	}
 	opts.SetAutoReconnect(true)
+	opts.SetConnectTimeout(time.Second * 30)
+	opts.SetPingTimeout(time.Second * 20)
+	opts.SetWriteTimeout(time.Second * 30)
 	opts.SetKeepAlive(time.Second * 60)
-	opts.SetCleanSession(!m.PersistentSession)
+	//opts.SetCleanSession(!m.PersistentSession)
+	opts.SetDefaultPublishHandler(m.recvMessage)
 	opts.SetOnConnectHandler(m.onConnect)
 	opts.SetConnectionLostHandler(m.onConnectionLost)
 	return opts, nil
